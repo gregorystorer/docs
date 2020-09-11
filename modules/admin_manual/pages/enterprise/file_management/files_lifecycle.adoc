@@ -1,101 +1,132 @@
 = File Lifecycle Management
 :toc: right
 
-Manage the lifecycle of files within ownCloud to keep your working structure clean, organized and up to date. Choose an archiving and expiration policy that suits your workflow and select an appropriate archive destination to store your old files. Policies can be configured to include and exclude certain files, users
-and groups from the archiving actions. 
+== Introduction
 
-== Installation & Configuration
+The File Lifecycle Management extension allows service providers to manage the lifecycle of files within ownCloud to
 
-=== Upload Time Tracking
+- keep storage usage under control by limiting the time users can work with files before they are cleaned up automatically
+- comply with regulations (like GDPR or company policies) by imposing automated retention and deletion policies for files that contain e.g., personal data and may only be stored in the company for a certain period of time.
 
-The first part of file lifecycle management begins with knowing when files first enter ownCloud. To start tracking this the app must be enabled. This will store an `upload-time` with each file, which is the server time at which it first appeared on the ownCloud server. Only files are tracked, not folders since these are never archived, only the files within them.
+To impose a workflow of Use => Archive => Delete, the extension equips ownCloud with a dedicated archive and allows administrators to define rules for automated archiving (days passed since upload) and subsequent deletion of files (days passed since archiving). Only files are archived as folders do not consume storage space and existing folder structures should be kept available. The archiving and deletion processes are controlled by background jobs.
 
-If installing this app on a system with existing data, the `lifecycle:set-upload-time` command can be used to pre-set a specific upload time to all existing files, so they may also be included in the archiving workflow. Files without an `upload-time` will not be considered for archive.
+Depending on the desired level of enforcement, the extension provides two policies to control the restoration of files from the archive if they are still needed:
+
+- Soft policy: Users can restore files in self-service
+- Hard policy: Only administrators or group administrators can restore files on request
+
+Users can view the lifecycle status for a file and see when the file is scheduled for archiving or deletion. All lifecycle events of a file are displayed transparently. They can be tracked for individual files as well as for a whole user account using the https://marketplace.owncloud.com/apps/activity[Activity] stream. To stay informed, users can also receive regular Activity summaries by e-mail. For auditing purposes the extension integrates with the https://marketplace.owncloud.com/apps/admin_audit[Auditing] app to provide all events of interest in the logs.
+
+== Setup & Configuration
+
+=== Setting upload times for existing files
+
+File Lifecycle Management uses the _upload time_ of files (server time at which it first appeared on the ownCloud server) to determine when to archive them. As ownCloud Server generally does not store this metadata, the File Lifecycle Management extension takes care of this when it is enabled.
+
+When File Lifecycle Management is set up on an existing ownCloud installation, you therefore have to set an _upload time_ for all files that existed before the extension has been enabled to allow the archiving policies doing their job.
+To set an upload time for all files that do not yet have one, you can use the `lifecycle:set-upload-time` _occ_ command. Files without an _upload time_ will not be considered for archiving.
 
 Example: `occ lifecycle:set-upload-time 2019-11-01`
 
+TIP: The extension only considers files. Folder structures are kept available.
+
 === Policy Configuration
+==== Overview
 
-The Lifecycle app uses policies to determine which files to archive and when, as 
-well as when to expire the files from archive, if at all. Hard and Soft policies 
-are available, depending on the use case requirements.
+File Lifecycle Management uses policies to determine which files to archive and when, as well as when to expire the files from archive. In addition, a soft and a hard policy are available to control whether users can restore archived files in self-service or not.
 
-By default, the SoftPolicy is used. To configure the policy, use the `occ` command:
+Three options are available for controlling the archiving and expiration policies, all set via the `config:app:set` _occ_ command under the `files_lifecycle` app:
 
-`occ config:app:set files_lifecycle policy --value='hard'`
-
-Three options are available for controlling the policies, all set via `occ config:app:set` under the `files_lifecycle` app:
-
-- `archive_period` int - The number of days after upload, or restore, that the file will be archived
-- `expire_period` int - The number of days after archive which the file will be  permanently deleted
-- `excluded_groups` string, comma separated group ids - Groups who are exempt from lifecycle policy.
+- `archive_period` - The number of days passed after upload (or restore) for that files will be archived
+- `expire_period` - The number of days passed after archiving for that files will be permanently deleted
+- `excluded_groups` - Allows to define groups of users that are exempt from the Lifecycle policies (comma-separated group ids)
 
 Example: `occ config:app:set files_lifecycle archive_period --value='90'`
 
-==== Soft Policy
+==== Restoration Policies
+
+===== Soft Policy
   
-The Soft policy is for use cases where the main working directory  should be reserved for actively used files, and users are encouraged to archive older data. Admins are also still able to impersonate users and restore files for them to assist where necessary.
+The _soft policy_ aims at use cases where users should be allowed to restore files from the archive in self-service if they are still needed. It imposes a soft archiving enforcement but on the other hand relieves IT departments when archived files need to be restored.
+The _soft policy_ is used by default. To switch from the hard policy to the soft policy, use this _occ_ command:
 
-==== Hard Policy
+`occ config:app:set files_lifecycle policy --value='soft'`
 
-The Hard policy is designed to enforce strict controls on users data, forcing archive after a set time, and requiring escalated permissions in order to restore.
+===== Hard Policy
 
-[NOTE]
-====
-With Hard Policy, users are not permitted to restore their own files. Impersonators are allowed to restore files of the users they are impersonating. This allows managers to restore specific files or folders for users on request.
-====
+The hard policy is designed to enforce strict controls on user data, forcing archiving after the defined time and requiring escalated permissions in order to restore. For the case that archived data is still needed, users need to get in contact with a privileged manager and request the restoration.
 
-==== Archive Destination
+TIP: When the _hard policy_ is in place only administrators (or also group administrators, depending the configuration) are able to restore files from the archive by impersonating the respective users. The https://marketplace.owncloud.com/apps/impersonate[Impersonate app] has to be installed and enabled as a prerequisite. Apart from that, system administrators can also use _occ_ commands to restore data from the archive (see section 'Restoring Files').
 
-By default, archived files are also stored within the ownCloud data directory, 
-but outside the users files directories so that they are not accessible using the 
-web ui and sync clients. Normal files are stored in `/datadir/$userid/files`, whilst
-archived files are stored in `/datadir/$userid/archive/files/`.
+To put the _hard policy_ in place, use this _occ_ command:
 
-==== Archive and Expiry Background Jobs
+`occ config:app:set files_lifecycle policy --value='hard'`
 
-Scanning the dataset for files that should be archived, and expired, given the active
-policies is expensive. For this reason, those jobs are delegated to specific `occ` 
-commands which should be executed using cron jobs on a daily schedule.
+==== Archive Location
 
-`occ lifecycle:archive` will move files scheduled for archive into the archive.
+By default, archived files are stored within the ownCloud data directory, but outside the users files directories so that they are not accessible using the web ui and sync clients. Normal files are stored in `/datadir/$userid/files`, whilst archived files are stored in `/datadir/$userid/archive/files/`.
 
-`occ lifecycle:expire` will permanently delete files from the archive that have
-met the appropriate policy rules.
+=== Archive and Expiration Background Jobs
 
-==== Restoring Files
+Scanning the database for files that are due for archiving or expiration, given the chosen policies, can take some time. For this reason, these jobs are delegated to specific _occ_ commands which should be executed using CRON on a daily schedule.
 
-Admins may restore users files manually using the command `occ lifecycle:restore`.
-If a user would like the folder `/work/projects/project1` restored, the admin can trigger the following command:
+**1) Archiving background job**
+To move files scheduled for archiving (days since upload/restore > `archive_time`) into the archive, execute the following _occ_ command:
 
-`occ lifecycle:restore /userid/archive/files/work/projects/project1`
+`occ lifecycle:archive`
 
-If you would like to stop using Lifecycle Management and restore all files from  all archives back to their owners' files directories, you can use the `restore-all`  command:
+TIP: There is a dry-run mode (append `-d`) that simulates the execution of this command to allow checking the configuration before putting the actual process in place.
+
+**2) Archive expiration background job**
+To permanently delete files from the archive that have met the policy rules (days since archiving > `expire_period`), execute the following _occ_ command:
+
+`occ lifecycle:expire` 
+
+TIP: There is a dry-run mode (append `-d`) that simulates the execution of this command to allow checking the configuration before putting the actual process in place.
+
+=== Restoring Files
+
+For the case that archived files are still needed, users can restore them in self-service (_soft policy_) or have to request the restoration via privileged managers (_hard policy_).
+
+TIP: When files have been restored, they can again be used for the same amount of time as they were initially available.
+
+Apart from that, system administrators can restore files from the archive using the _occ_ command `lifecycle:restore`:
+
+**Restoration by path**
+When a user `alice` requests to restore all files, e.g., in the folder `/work/projects/project1`, a system administrator can execute the following command:
+
+`occ lifecycle:restore /alice/archive/files/work/projects/project1`
+
+**Restoring all files from all archives**
+File Lifecycle Management provides a way to restore all files from all archives back to their owners' file directories. To do this, system administrators can use the `restore-all` _occ_ command:
 
 `occ lifecycle:restore-all` 
 
-which will restore all files from all users, and report on the progress as it does so.
+The command will restore all files from all users and report on the progress.
 
-==== Audit Events
+TIP: There is a dry-run mode (append `-d`) that simulates the execution of this command to allow checking the configuration before putting the actual process in place.
 
-During archive, restore and expiry, appropriate Audit events are emitted. This requires `admin_audit` v2.0.0 minimum.
+=== Disabling the user interface components
 
-==== Notes about Archived Files
-
- - Shares pointing to archived files will not be found but will resume upon restore
- - Users' archives are not currently transferred with `occ transfer-ownership`
- - Files within a users trashbin are not archived, use trashbin deletion policies
- - Archived files count towards the user's quota
-
-== Disable the UI
-
-It could be desired to disable the whole UI for this app. This can be done by setting the following configuration value.
+In some scenarios it can be desired to disable the whole user interface for this app. This can be done by setting the following configuration value:
 
 `occ config:app:set files_lifecycle disable_ui --value='yes'`
 
-To enable the UI again, this config value needs to be removed.
+To enable the user interface components again, this config value needs to be removed:
 
 `occ config:app:delete files_lifecycle disable_ui`
+
+== Audit Events
+
+During archiving, restoring and expiration, Audit events are emitted. Logging those to the audit.log requires the minimum version 2.0.0 of the https://marketplace.owncloud.com/apps/admin_audit[Auditing] app.
+
+== Notes about Archived Files
+
+- File shares will disappear after archiving. When restoring archived files, shares will also be restored.
+- Users' archives currently can't be transferred with `occ transfer-ownership`
+- Files within a user's trash bin are not archived. The regular trash bin deletion policies have to be used to take care of those.
+- Archived files count towards the user's quota
+
 
 == Usage
 
